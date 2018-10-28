@@ -14,7 +14,7 @@
 
 package main
 
-import "cli/cmd"
+import "github.com/yhaobj/docker/cmd"
 
 func main() {
 	cmd.Execute()
