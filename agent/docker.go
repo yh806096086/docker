@@ -15,6 +15,8 @@ import (
 	"io/ioutil"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"strings"
+	"io"
 )
 
 
@@ -22,6 +24,11 @@ type containerCreateConfig struct {
 	Config container.HostConfig
 	HostConfig container.HostConfig
 	NetworkConfig network.NetworkingConfig
+}
+
+type Login struct {
+	User string `json:"user"`
+	Password string `json:"password"`
 }
 
 var cli *client.Client
@@ -61,10 +68,11 @@ func listImages(w http.ResponseWriter, r *http.Request) {
 
 func deleteImage(w http.ResponseWriter, r *http.Request) {
 	//fmt.Fprint(w, []byte("delete container"))
-	if ok := r.ParseForm(); ok != nil {
-		fmt.Fprint(w, []byte("Server Error"))
-	}
-	id := r.Form.Get("id")
+
+	// /api/v1/image/{id}
+	path := strings.Split(r.URL.Path, "/")
+	id := path[len(path)-1]
+
 	if _, ok := cli.ImageRemove(context.Background(), id, types.ImageRemoveOptions{}); ok != nil {
 		fmt.Fprint(w, []byte("Server Error"))
 	}
@@ -97,12 +105,12 @@ func pullImage(w http.ResponseWriter, r *http.Request) {
 
 func inspectImage(w http.ResponseWriter, r *http.Request) {
 	//fmt.Fprint(w, []byte("inspect image"))
-	if ok := r.ParseForm(); ok != nil {
-		fmt.Fprint(w, []byte("Server Error"))
-	}
-	id := r.Form.Get("id")
 
+	// /api/v1/image/{id}/inspect
 
+	path := strings.Split(r.URL.Path, "/")
+
+	id := path[3]
 	ins, _, ok := cli.ImageInspectWithRaw(context.Background(), id);
 	if ok != nil {
 		fmt.Fprint(w, []byte("Server Error"))
@@ -143,6 +151,8 @@ func runContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defer r.Body.Close()
+
 	opt := containerCreateConfig{}
 	if ok := json.Unmarshal(body, opt); ok != nil {
 		fmt.Fprint(w, []byte("Server Error"))
@@ -172,11 +182,11 @@ func runContainer(w http.ResponseWriter, r *http.Request) {
 }
 
 func stopContainer(w http.ResponseWriter, r *http.Request) {
-	if ok := r.ParseForm(); ok != nil {
-		fmt.Fprint(w, []byte("Server Error"))
-	}
-	id := r.Form.Get("id")
 
+	// /api/v1/container/{id}/stop
+
+	path := strings.Split(r.URL.Path, "/")
+	id := path[len(path)-2]
 	timeout := 1 *time.Second
 	if ok:= cli.ContainerStop(context.Background(), id, &timeout); ok != nil {
 		fmt.Fprint(w, []byte("Server Error"))
@@ -186,13 +196,11 @@ func stopContainer(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func stateContainer(w http.ResponseWriter, r *http.Request) {
+func statsContainer(w http.ResponseWriter, r *http.Request) {
 	//fmt.Fprint(w, []byte("state container"))
-	if ok := r.ParseForm(); ok != nil {
-		fmt.Fprint(w, []byte("Server Error"))
-	}
-	id := r.Form.Get("id")
 
+	path := strings.Split(r.URL.Path, "/")
+	id := path[len(path)-2]
 	stats, err := cli.ContainerStats(context.Background(), id, false)
 	if err != nil {
 		fmt.Fprint(w, []byte("Server Error"))
@@ -208,10 +216,9 @@ func stateContainer(w http.ResponseWriter, r *http.Request) {
 }
 
 func inspectContainer(w http.ResponseWriter, r *http.Request) {
-	if ok := r.ParseForm(); ok != nil {
-		fmt.Fprint(w, []byte("Server Error"))
-	}
-	id := r.Form.Get("id")
+
+	path := strings.Split(r.URL.Path, "/")
+	id := path[len(path)-2]
 
 	inspect, err := cli.ContainerInspect(context.Background(), id);
 	if err != nil {
@@ -228,11 +235,9 @@ func inspectContainer(w http.ResponseWriter, r *http.Request) {
 }
 
 func deleteContainer(w http.ResponseWriter, r *http.Request) {
-	if ok := r.ParseForm(); ok != nil {
-		fmt.Fprint(w, []byte("Server Error"))
-	}
-	id := r.Form.Get("id")
 
+	path := strings.Split(r.URL.Path, "/")
+	id := path[len(path)-1]
 	if ok := cli.ContainerRemove(context.Background(),id, types.ContainerRemoveOptions{}); ok != nil {
 		fmt.Fprint(w, []byte("Server Error"))
 		return
@@ -259,7 +264,58 @@ func dockerVersion(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+//docker dick stats
 
+func dockerDiskStats(w http.ResponseWriter, r *http.Request) {
+
+	usage, err := cli.DiskUsage(context.Background())
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	d, err := json.Marshal(usage)
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Fprint(w, d)
+}
+
+func dockerLogin(w http.ResponseWriter, r *http.Request) {
+
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		fmt.Fprint(w, []byte("Server Error"))
+		return
+	}
+
+	defer r.Body.Close()
+
+	l := Login{}
+	if ok := json.Unmarshal(body, l); ok != nil {
+		fmt.Printf("%s\n", err.Error())
+	}
+
+	authBody, err := cli.RegistryLogin(context.Background(),
+										types.AuthConfig{Username:l.User, Password:l.Password})
+	if err != nil {
+		fmt.Printf("%s\n", err.Error())
+	}
+	fmt.Println(authBody)
+	io.WriteString(w, "docker login ok")
+}
+
+func dockerInfo(w http.ResponseWriter, r *http.Request) {
+
+	info, err := cli.Info(context.Background())
+	if err != nil {
+		fmt.Printf("%s\n", err.Error())
+	}
+	d, err := json.Marshal(info)
+	if err != nil {
+		fmt.Printf("%s\n", err.Error())
+	}
+	fmt.Fprint(w, d)
+}
 
 func Run(cmd *cobra.Command, args []string) {
 
@@ -272,22 +328,27 @@ func Run(cmd *cobra.Command, args []string) {
 
 	r := mux.NewRouter()
 
-	//镜像
 	r.HandleFunc("/api/v1/test", testHandler).Methods("GET")
+
+	//镜像
 	r.HandleFunc("/api/v1/image", listImages).Methods("GET")
 	r.HandleFunc("/api/v1/image/{id}", deleteImage).Methods("DELETE")
 	r.HandleFunc("/api/v1/image", pullImage).Methods("POST")
-	r.HandleFunc("/api/v1/image/inspect", inspectImage).Methods("GEt")
+	r.HandleFunc("/api/v1/image/{id}/inspect", inspectImage).Methods("GEt")
 
 	//容器
 	r.HandleFunc("/api/v1/container", listContainer).Methods("GET")
-	r.HandleFunc("/api/v1/container/{id}/state", stateContainer).Methods("GET")
-	r.HandleFunc("/api/v1/container/{id}/stop", stopContainer).Methods("DELETE")
+	r.HandleFunc("/api/v1/container/{id}/stats", statsContainer).Methods("GET")
+	r.HandleFunc("/api/v1/container/{id}/stop", stopContainer).Methods("PUT")
 	r.HandleFunc("/api/v1/container/{id}/", deleteContainer).Methods("DELETE")
 	r.HandleFunc("/api/v1/container/{id}/inspect", inspectContainer).Methods("GET")
 	r.HandleFunc("/api/v1/container", runContainer).Methods("POST")
 
+	//docker domain
 	r.HandleFunc("/api/v1/docker/version", dockerVersion).Methods("GET")
+	r.HandleFunc("/api/v1/dcoker/disk", dockerDiskStats).Methods("GET")
+	r.HandleFunc("/api/v1/docker/login", dockerLogin).Methods("POST")
+	r.HandleFunc("/api.v1/docker/info", dockerInfo).Methods("GET")
 
 	s := http.Server{
 		Addr: lis,
