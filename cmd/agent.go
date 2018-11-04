@@ -42,6 +42,11 @@ func init() {
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
 	// agentCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-	runCmd.Flags().StringP("listen", "l", "127.0.0.1:8080", "listen ip and port")
+	runCmd.Flags().StringP("address", "a", "127.0.0.1:8080", "listen ip and port")
 	//agentCmd.Flags().StringP("port", "p", "8080", "listen port")
+	runCmd.Flags().StringP("endpoint", "e", "127.0.0.1:80", "remote server")
+	runCmd.Flags().StringP("user", "u", "admin", "registry user")
+	runCmd.Flags().StringP("password", "p", "admin", "registry password")
+	runCmd.Flags().StringP("certfile", "c", "./ca.pem", "cert file")
+	runCmd.Flags().StringP("keyfile", "k", "./key.pem", "key file")
 }

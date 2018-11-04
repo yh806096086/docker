@@ -17,8 +17,15 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"strings"
 	"io"
+	"github.com/shirou/gopsutil/mem"
+	"github.com/shirou/gopsutil/cpu"
+	"github.com/shirou/gopsutil/disk"
+	"github.com/shirou/gopsutil/net"
+	"os"
 )
 
+
+var endpoint string
 
 type containerCreateConfig struct {
 	Config container.HostConfig
@@ -246,6 +253,20 @@ func deleteContainer(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+func restartContainer(w http.ResponseWriter, r *http.Request) {
+	path := strings.Split(r.URL.Path, "/")
+	id := path[len(path)-2]
+
+	timeout := 2 * time.Second
+	if ok := cli.ContainerRestart(context.Background(), id, &timeout); ok != nil {
+		fmt.Fprint(w, []byte("Server Error"))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	io.WriteString(w, `{"code":200, "message":"Ok"}`)
+}
+
 //docker daemon
 func dockerVersion(w http.ResponseWriter, r *http.Request) {
 	//fmt.Fprint(w, []byte("docker version"))
@@ -317,14 +338,137 @@ func dockerInfo(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, d)
 }
 
+
+func sysMem(w http.ResponseWriter, r *http.Request) {
+	v, err := mem.VirtualMemory()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+		io.WriteString(w, `{"code":500, "message":"Server Error"}`)
+		log.Printf("%v\n", err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Write([]byte(v.String()))
+	return
+}
+
+func sysCpu(w http.ResponseWriter, r *http.Request) {
+	c, err := cpu.Info()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+		io.WriteString(w, `{"code":500, "message":"Server Error"}`)
+		log.Printf("%v\n", err)
+		return
+	}
+
+	js, err := json.Marshal(c)
+	if err != nil {
+
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+		io.WriteString(w, `{"code":500, "message":"Server Error"}`)
+		log.Printf("%v\n", err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Write(js)
+	return
+}
+
+func sysDisk(w http.ResponseWriter, r *http.Request) {
+	disk, err := disk.Partitions(false)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+		io.WriteString(w, `{"code":500, "message":"Server Error"}`)
+		log.Printf("%v\n", err)
+		return
+	}
+
+	js, err := json.Marshal(disk)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+		io.WriteString(w, `{"code":500, "message":"Server Error"}`)
+		log.Printf("%v\n", err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Write(js)
+	return
+}
+
+func sysNet(w http.ResponseWriter, r *http.Request) {
+
+	n, err := net.IOCounters(false)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+		io.WriteString(w, `{"code":500, "message":"Server Error"}`)
+		log.Printf("%v\n", err)
+		return
+	}
+
+	js, err := json.Marshal(n)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+		io.WriteString(w, `{"code":500, "message":"Server Error"}`)
+		log.Printf("%v\n", err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Write(js)
+	return
+
+}
+
+
+
+func SysBaseInfo(endpoint string) {
+
+}
+
+
+func fileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return true, err
+}
+
 func Run(cmd *cobra.Command, args []string) {
 
 	fset := cmd.LocalFlags()
-	lis, err := fset.GetString("listen")
+	addr, err := fset.GetString("address")
 	if err != nil {
 		panic(err)
 	}
 
+	certFile, err := fset.GetString("certfile")
+	if err != nil {
+		panic(err)
+	}
+	keyFile, err := fset.GetString("keyfile")
+	if err != nil {
+		panic(err)
+	}
+
+	e, err := fset.GetString("endpoint")
+	if err != nil {
+		panic(err)
+	}
+	endpoint = e
 
 	r := mux.NewRouter()
 
@@ -342,6 +486,7 @@ func Run(cmd *cobra.Command, args []string) {
 	r.HandleFunc("/api/v1/container/{id}/stop", stopContainer).Methods("PUT")
 	r.HandleFunc("/api/v1/container/{id}/", deleteContainer).Methods("DELETE")
 	r.HandleFunc("/api/v1/container/{id}/inspect", inspectContainer).Methods("GET")
+	r.HandleFunc("/api/v1/container/{id}/restart", restartContainer).Methods("GET")
 	r.HandleFunc("/api/v1/container", runContainer).Methods("POST")
 
 	//docker domain
@@ -350,12 +495,30 @@ func Run(cmd *cobra.Command, args []string) {
 	r.HandleFunc("/api/v1/docker/login", dockerLogin).Methods("POST")
 	r.HandleFunc("/api.v1/docker/info", dockerInfo).Methods("GET")
 
+
+	//sys
+	r.HandleFunc("/api/v1/sys/mem", sysMem).Methods("GET")
+	r.HandleFunc("/api/v1/sys/cpu", sysCpu).Methods("GET")
+	r.HandleFunc("/api/v1/sys/disk", sysDisk).Methods("GET")
+	r.HandleFunc("/api/v1/sys/men", sysMem).Methods("GET")
+	r.HandleFunc("/api/v1/sys/net", sysNet).Methods("GET")
+
+	//404
+	r.NotFoundHandler = http.NotFoundHandler()
+
 	s := http.Server{
-		Addr: lis,
+		Addr: addr,
 		Handler: r,
 		ReadTimeout: 1 * time.Minute,
 		WriteTimeout: 1 * time.Minute,
 		MaxHeaderBytes: 1 << 20,
+	}
+
+
+	c, _ := fileExists(certFile)
+	k, _ := fileExists(keyFile)
+	if c == true && k == true {
+		log.Fatal(s.ListenAndServeTLS(certFile, keyFile))
 	}
 
 	log.Fatal(s.ListenAndServe())
